@@ -1,4 +1,5 @@
 import express from "express";
+import pool from "./config/db";
 
 const app = express();
 
@@ -6,6 +7,24 @@ app.get("/health", (_, res) => {
     res.json({
         status: "ok"
     });
+});
+
+app.get("/health/db", async (_, res) => {
+    try {
+        const result = await pool.query(
+            "SELECT NOW()"
+        );
+
+        res.json({
+            status: "connected",
+            time: result.rows[0]
+        });
+
+    } catch {
+        res.status(500).json({
+            status: "failed"
+        });
+    }
 });
 
 app.listen(3000, () => {
