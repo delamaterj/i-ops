@@ -1,11 +1,13 @@
 import express from "express";
 import pool from "./config/db";
 import authRoutes from "./modules/auth/auth.routes";
+import usersRoutes from "./modules/users/users.routes";
 
 const app = express();
 
 app.use(express.json());
 app.use("/auth", authRoutes);
+app.use( "/users",usersRoutes);
 
 app.get("/health", (_, res) => {
     res.json({
