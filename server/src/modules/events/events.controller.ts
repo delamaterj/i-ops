@@ -24,8 +24,8 @@ export async function getEventFeedService(
             return [];
         }
 
-        //Main query
-        const events =
+        //Main feed query
+        const result =
             await client.query(
                 `
                 SELECT DISTINCT
@@ -38,7 +38,9 @@ export async function getEventFeedService(
 
                     ed.id AS event_date_id,
                     ed.start_time,
-                    ed.end_time
+                    ed.end_time,
+
+                    r.status AS rsvp_status
 
                 FROM events e
 
@@ -48,19 +50,26 @@ export async function getEventFeedService(
                 JOIN event_departments edp
                     ON edp.event_id = e.id
 
+                LEFT JOIN rsvps r
+                    ON r.event_date_id = ed.id
+                    AND r.user_id = $1
+
                 WHERE
                     e.status IN ('PUBLISHED', 'SUBMITTED')
 
-                AND edp.department_id = ANY($1)
+                AND edp.department_id = ANY($2)
 
                 ORDER BY ed.start_time ASC
                 `,
-                [departments]
+                [userId, departments]
             );
 
-        return events.rows;
+        return result.rows;
 
     } finally {
+
         client.release();
+
     }
+
 }
