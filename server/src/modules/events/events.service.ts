@@ -170,3 +170,122 @@ export async function publishEventService(eventId: string, adminUserId: string) 
     }
 }
 
+export async function resolveApprovalService(
+    eventId: string,
+    adminUserId: string,
+    decision: "APPROVED" | "REJECTED",
+    description?: string
+) {
+
+    const client = await pool.connect();
+
+    try {
+
+        await client.query("BEGIN");
+
+        //Identify event
+        const eventResult = await client.query(
+            `
+            SELECT id, status
+            FROM events
+            WHERE id = $1
+            FOR UPDATE
+            `,
+            [eventId]
+        );
+
+        if (eventResult.rowCount === 0) {
+            throw new Error("Event not found");
+        }
+
+        //Get latest pending approval
+        const approvalResult = await client.query(
+            `
+            SELECT id
+            FROM approvals
+            WHERE
+                event_id = $1
+                AND status = 'PENDING'
+            ORDER BY created_at DESC
+            LIMIT 1
+            FOR UPDATE
+            `,
+            [eventId]
+        );
+
+        if (approvalResult.rowCount === 0) {
+            throw new Error(
+                "No pending approval exists"
+            );
+        }
+
+        const approvalId =
+            approvalResult.rows[0].id;
+
+        //Update approval
+        await client.query(
+            `
+            UPDATE approvals
+            SET
+                approved_by = $1,
+                status = $2,
+                description = $3,
+                updated_at = NOW()
+            WHERE id = $4
+            `,
+            [
+                adminUserId,
+                decision,
+                description ?? null,
+                approvalId
+            ]
+        );
+
+        //Update event
+        const nextStatus =
+            decision === "APPROVED"
+                ? "PUBLISHED"
+                : "DRAFT";
+
+        await client.query(
+            `
+            UPDATE events
+            SET
+                status = $1,
+                updated_at = NOW()
+            WHERE id = $2
+            `,
+            [
+                nextStatus,
+                eventId
+            ]
+        );
+
+        await client.query(
+            "COMMIT"
+        );
+
+        return {
+            eventId,
+            approvalStatus:
+                decision,
+            eventStatus:
+                nextStatus
+        };
+
+    } catch (err) {
+
+        await client.query(
+            "ROLLBACK"
+        );
+
+        throw err;
+
+    } finally {
+
+        client.release();
+
+    }
+
+}
+
