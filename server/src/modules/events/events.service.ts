@@ -169,4 +169,3 @@ export async function publishEventService(eventId: string, adminUserId: string) 
         client.release();
     }
 }
-
