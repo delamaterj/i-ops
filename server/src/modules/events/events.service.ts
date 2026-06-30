@@ -99,3 +99,74 @@ export async function createEventService(input: any, userId: string) {
     }
 }
 
+export async function publishEventService(eventId: string, adminUserId: string) {
+    const client = await pool.connect();
+
+    try {
+        await client.query("BEGIN");
+
+        //Verify elgible event exists
+        const eventResult = await client.query(
+            `
+            SELECT id, status
+            FROM events
+            WHERE id = $1
+            FOR UPDATE
+            `,
+            [eventId]
+        );
+
+        if (eventResult.rowCount === 0) {
+            throw new Error("Event not found");
+        }
+
+        const event = eventResult.rows[0];
+
+        if (event.status !== "SUBMITTED" && event.status !== "DRAFT") {
+            throw new Error("Event cannot be published");
+        }
+
+        //Check for approval
+        const approvalResult = await client.query(
+            `
+            SELECT id
+            FROM approvals
+            WHERE event_id = $1
+              AND status = 'APPROVED'
+            ORDER BY updated_at DESC
+            LIMIT 1
+            `,
+            [eventId]
+        );
+
+        if (approvalResult.rowCount === 0) {
+            throw new Error("No approved approval found");
+        }
+
+        //Update event status (published)
+        await client.query(
+            `
+            UPDATE events
+            SET status = 'PUBLISHED',
+                updated_at = NOW()
+            WHERE id = $1
+            `,
+            [eventId]
+        );
+
+        await client.query("COMMIT");
+
+        return {
+            eventId,
+            status: "PUBLISHED",
+            message: "Event successfully published"
+        };
+
+    } catch (err) {
+        await client.query("ROLLBACK");
+        throw err;
+    } finally {
+        client.release();
+    }
+}
+
