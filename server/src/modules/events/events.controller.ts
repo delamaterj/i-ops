@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { getEventDetailsService } from "./events.service";
+import { getEventDetailsService, createEventService } from "./events.service";
 
 function getSingleParam(
     param: string | string[] | undefined
@@ -36,6 +36,23 @@ export async function getEventDetails(req: Request, res: Response) {
     } catch (err) {
         
         return res.status(500).json({error: "Error finding event"});
+    }
+
+}
+
+export async function createEvent(req: Request, res: Response) {
+
+    try {
+        const userId = req.user?.userId;
+        if (!userId) {
+            return res.status(401).json({message: "Unauthorized"});
+        }
+        const result = await createEventService(req.body, userId);
+        return res.status(201).json(result);
+    }
+
+    catch (err) {
+        return res.status(500).json({message: "Failed to create event"});
     }
 
 }
