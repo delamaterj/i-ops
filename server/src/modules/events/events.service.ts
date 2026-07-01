@@ -1,46 +1,47 @@
 import pool from "../../config/db";
-import { validateCreateEvent } from "./events.validation"
 
-export async function createEventService(input: any, userId: string) {
-
-    //Validate input
-    validateCreateEvent(input);
+export async function createEventService(payload: any, userId: string) {
 
     const client = await pool.connect();
 
     try {
+
         await client.query("BEGIN");
 
-        //Insert event
+        //Create event
         const eventResult = await client.query(
-            `
-            INSERT INTO events (
-                id,
-                title,
-                description,
-                created_by,
-                status,
-                created_at,
-                updated_at
-            )
-            VALUES (
-                gen_random_uuid(),
-                $1,
-                $2,
-                $3,
-                'DRAFT',
-                NOW(),
-                NOW()
-            )
-            RETURNING id
-            `,
-            [input.title, input.description ?? null, userId]
-        );
+                `
+                INSERT INTO events (
+                    id,
+                    title,
+                    description,
+                    capacity,
+                    status,
+                    created_by
+                )
+                VALUES (
+                    gen_random_uuid(),
+                    $1,
+                    $2,
+                    $3,
+                    'DRAFT',
+                    $4
+                )
+                RETURNING id
+                `,
+                [
+                    payload.title,
+                    payload.description,
+                    payload.capacity,
+                    userId
+                ]
+            );
 
         const eventId = eventResult.rows[0].id;
 
         //Insert event_dates
-        for (const d of input.eventDates) {
+        for (const date of payload.dates
+        ) {
             await client.query(
                 `
                 INSERT INTO event_dates (
@@ -58,10 +59,33 @@ export async function createEventService(input: any, userId: string) {
                 `,
                 [
                     eventId,
-                    d.start_time,
-                    d.end_time ?? null
+                    date.start_time,
+                    date.end_time
                 ]
             );
+
+        }
+
+        //Insert departments
+        for (const deptId of payload.departments) {
+
+            await client.query(
+                `
+                INSERT INTO event_departments (
+                    event_id,
+                    department_id
+                )
+                VALUES (
+                    $1,
+                    $2
+                )
+                `,
+                [
+                    eventId,
+                    deptId
+                ]
+            );
+
         }
 
         //Create approval
@@ -72,31 +96,37 @@ export async function createEventService(input: any, userId: string) {
                 event_id,
                 submitted_by,
                 status,
-                created_at,
-                updated_at
+                description
             )
             VALUES (
                 gen_random_uuid(),
                 $1,
                 $2,
                 'PENDING',
-                NOW(),
-                NOW()
+                NULL
             )
             `,
-            [eventId, userId]
+            [
+                eventId,
+                userId
+            ]
         );
 
         await client.query("COMMIT");
 
-        return eventId;
+        return {eventId, status: "DRAFT"};
+    }
 
-    } catch (err) {
+    catch (err) {
+
         await client.query("ROLLBACK");
         throw err;
-    } finally {
+    }
+
+    finally {
         client.release();
     }
+
 }
 
 export async function publishEventService(eventId: string, adminUserId: string) {
