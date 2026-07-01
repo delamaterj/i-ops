@@ -169,3 +169,307 @@ export async function publishEventService(eventId: string, adminUserId: string) 
         client.release();
     }
 }
+
+export async function getEventFeedService(
+    userId: string
+) {
+
+    const client = await pool.connect();
+
+    try {
+
+        //Get user departments
+        const deptResult = await client.query(
+                `
+                SELECT department_id
+                FROM user_departments
+                WHERE user_id = $1
+                `,
+                [userId]
+            );
+
+        const departments = deptResult.rows.map(r => r.department_id);
+
+        if (departments.length === 0) {
+            return [];
+        }
+
+        //Main feed query
+        const result =
+            await client.query(
+                `
+                SELECT DISTINCT
+                    e.id,
+                    e.title,
+                    e.description,
+                    e.status,
+                    e.capacity,
+                    e.created_at,
+
+                    ed.id AS event_date_id,
+                    ed.start_time,
+                    ed.end_time,
+
+                    r.status AS rsvp_status
+
+                FROM events e
+
+                JOIN event_dates ed
+                    ON ed.event_id = e.id
+
+                JOIN event_departments edp
+                    ON edp.event_id = e.id
+
+                LEFT JOIN rsvps r
+                    ON r.event_date_id = ed.id
+                    AND r.user_id = $1
+
+                WHERE
+                    e.status IN ('PUBLISHED', 'SUBMITTED')
+
+                AND edp.department_id = ANY($2)
+
+                ORDER BY ed.start_time ASC
+                `,
+                [userId, departments]
+            );
+
+        return result.rows;
+
+    } finally {
+
+        client.release();
+
+    }
+
+}
+
+export async function getEventDetailsService(
+    eventId: string,
+    userId: string
+) {
+
+    const client =
+        await pool.connect();
+
+    try {
+
+        const userDepartments = await client.query(
+                `
+                SELECT department_id
+                FROM user_departments
+                WHERE user_id=$1
+                `,
+                [userId]
+            );
+
+        const departments = userDepartments.rows.map(r => r.department_id);
+
+        if (departments.length === 0) {
+
+            return null;
+
+        }
+
+        const result = await client.query(
+                `SELECT
+                    e.id,
+                    e.title,
+                    e.description,
+                    e.status,
+                    e.capacity,
+                    e.created_at,
+                    d.id AS department_id,
+                    d.name AS department_name,
+                    ed.id AS event_date_id,
+                    ed.start_time,
+                    ed.end_time,
+                    r.status AS rsvp_status,
+
+                    COALESCE(rsvp.confirmed_count,0)
+                    AS confirmed_count,
+
+                    COALESCE(rsvp.waitlisted_count,0)
+                    AS waitlisted_count
+
+                FROM events e
+
+                JOIN event_dates ed
+                ON ed.event_id=e.id
+
+                JOIN event_departments ep
+                ON ep.event_id=e.id
+
+                JOIN departments d
+                ON d.id=ep.department_id
+
+                LEFT JOIN rsvps r
+                ON r.event_date_id=ed.id
+                AND r.user_id=$2
+
+                LEFT JOIN (
+
+                    SELECT
+
+                    event_date_id,
+
+                    COUNT(*) FILTER (WHERE status='CONFIRMED')
+                    AS confirmed_count,
+
+                    COUNT(*) FILTER (WHERE status='WAITLISTED')
+                    AS waitlisted_count
+
+                    FROM rsvps
+
+                    GROUP BY event_date_id
+
+                )
+
+                rsvp
+
+                ON rsvp.event_date_id=ed.id
+                WHERE
+                e.id=$1
+                AND ep.department_id=ANY($3)`,
+                [
+                    eventId,
+                    userId,
+                    departments
+                ]
+            );
+
+        if (result.rowCount === 0) {
+
+            return null;
+
+        }
+
+        const rows = result.rows;
+        const departmentMap = new Map();
+        const upcoming = [];
+        const past = [];
+        const dateMap = new Map();
+        const now = new Date();
+
+        for (const row of rows) {
+
+            if (!departmentMap.has(row.department_id)) {
+
+                departmentMap.set(row.department_id,
+                    {
+                        id:
+                            row.department_id,
+
+                        name:
+                            row.department_name
+                    }
+                );
+
+            }
+
+            if (!dateMap.has(row.event_date_id)
+            ) {
+                const available = Math.max(0, row.capacity - Number(row.confirmed_count));
+
+                const date = {
+
+                    id:
+                        row.event_date_id,
+
+                    start_time:
+                        row.start_time,
+
+                    end_time:
+                        row.end_time,
+
+                    rsvp_status:
+                        row.rsvp_status,
+
+                    confirmed_count:
+                        Number(row.confirmed_count),
+
+                    waitlisted_count:
+                        available === 0
+                            ? Number(row.waitlisted_count)
+                            : undefined,
+
+                    available_spots:
+                        available
+
+                };
+
+                dateMap.set(row.event_date_id,date);
+
+                const effectiveEnd =
+                    row.end_time
+                    ??
+                    row.start_time;
+
+                if (new Date(effectiveEnd) >= now) {
+
+                    upcoming.push(
+                        date
+                    );
+
+                }
+
+                else {
+
+                    past.push(
+                        date
+                    );
+
+                }
+
+            }
+
+        }
+
+        if (upcoming.length + past.length === 0) {
+
+            throw new Error("Invalid event state");
+
+        }
+
+        return {
+
+            id:
+                rows[0].id,
+
+            title:
+                rows[0].title,
+
+            description:
+                rows[0].description,
+
+            status:
+                rows[0].status,
+
+            capacity:
+                rows[0].capacity,
+
+            created_at:
+                rows[0].created_at,
+
+            departments:
+                [
+                    ...departmentMap.values()
+                ],
+
+            upcoming_dates:
+                upcoming,
+
+            past_dates:
+                past
+
+        };
+
+    }
+
+    finally {
+
+        client.release();
+
+    }
+
+}
