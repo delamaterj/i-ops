@@ -1,75 +1,41 @@
-import pool from "../../config/db";
+import { Request, Response } from "express";
+import { getEventDetailsService } from "./events.service";
 
-export async function getEventFeedService(
-    userId: string
-) {
+function getSingleParam(
+    param: string | string[] | undefined
+): string {
 
-    const client = await pool.connect();
+    if (!param) {
+        throw new Error("Missing param");
+    }
+
+    return Array.isArray(param)
+        ? param[0]
+        : param;
+}
+
+export async function getEventDetails(req: Request, res: Response) {
 
     try {
 
-        //Get user departments
-        const deptResult = await client.query(
-                `
-                SELECT department_id
-                FROM user_departments
-                WHERE user_id = $1
-                `,
-                [userId]
-            );
+        const eventId = getSingleParam(req.params.id);
+        const userId = req.user?.userId;
 
-        const departments = deptResult.rows.map(r => r.department_id);
-
-        if (departments.length === 0) {
-            return [];
+        if (!userId) {
+            return res.status(401).json({message: "Unauthorized"});
         }
 
-        //Main feed query
-        const result =
-            await client.query(
-                `
-                SELECT DISTINCT
-                    e.id,
-                    e.title,
-                    e.description,
-                    e.status,
-                    e.capacity,
-                    e.created_at,
+        const result = await getEventDetailsService(eventId, userId);
 
-                    ed.id AS event_date_id,
-                    ed.start_time,
-                    ed.end_time,
+        if (!result) {
+            return res.status(404).json({message: "Event not found"});
+        }
 
-                    r.status AS rsvp_status
+        return res.status(200).json(result);
 
-                FROM events e
-
-                JOIN event_dates ed
-                    ON ed.event_id = e.id
-
-                JOIN event_departments edp
-                    ON edp.event_id = e.id
-
-                LEFT JOIN rsvps r
-                    ON r.event_date_id = ed.id
-                    AND r.user_id = $1
-
-                WHERE
-                    e.status IN ('PUBLISHED', 'SUBMITTED')
-
-                AND edp.department_id = ANY($2)
-
-                ORDER BY ed.start_time ASC
-                `,
-                [userId, departments]
-            );
-
-        return result.rows;
-
-    } finally {
-
-        client.release();
-
+    } catch (err) {
+        
+        return res.status(500).json({error: "Error finding event"});
     }
 
 }

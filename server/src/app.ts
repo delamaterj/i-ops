@@ -2,12 +2,14 @@ import express from "express";
 import pool from "./config/db";
 import authRoutes from "./modules/auth/auth.routes";
 import usersRoutes from "./modules/users/users.routes";
+import eventsRoutes from "./modules/events/events.routes";
 
 const app = express();
 
 app.use(express.json());
 app.use("/auth", authRoutes);
 app.use( "/users",usersRoutes);
+app.use("/events", eventsRoutes);
 
 app.get("/health", (_, res) => {
     res.json({
